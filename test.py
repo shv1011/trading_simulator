@@ -2,7 +2,7 @@ import sys
 import json
 import asyncio
 import websockets
-from numpy import array, std, sqrt, cumsum  # More specific imports
+from numpy import array, std, sqrt, cumsum  
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QPushButton
@@ -117,7 +117,7 @@ class TradeSimulator(QWidget):
         self.show()
 
     async def start_websocket_client(self, exchange="OKX", asset="BTC-USDT-SWAP"):
-        print("start_websocket_client called.")  # Debug print at the start
+        print("start_websocket_client called.")  
         if self.websocket and self.websocket.open:
             print("Closing existing WebSocket connection...")
             await self.websocket.close()
@@ -244,37 +244,50 @@ class TradeSimulator(QWidget):
 
         asyncio.create_task(self.start_websocket_client(selected_exchange, selected_asset))
 
-async def main():
-    global window
-    print("async main function called.")
-    app = QApplication.instance() or QApplication(sys.argv)
-    print("QApplication created.")
-    window = TradeSimulator()
-    print("TradeSimulator window created.")
-    window.show()
-    print("window.show() called.")
-
-    def simple_task_done_callback(task):
-        if task.exception():
+def simple_task_done_callback(task):
+    try:
+        if task.cancelled():
+            print("WebSocket client task was cancelled")
+        elif task.exception():
             print(f"WebSocket client task failed with exception: {task.exception()}")
             traceback.print_exc()
-
-    try:
-        websocket_task = asyncio.create_task(window.start_websocket_client())
-        websocket_task.add_done_callback(simple_task_done_callback)
-        print("Initial websocket client task created and simple callback added in main.")
     except Exception as e:
-        print(f"Error creating initial websocket task: {e}")
+        print(f"Error in callback: {e}")
 
+async def main():
+    print("async main function called.")
+    app = QApplication(sys.argv)
+    print("QApplication created.")
+    
+    window = TradeSimulator()
+    print("TradeSimulator window created.")
+    
+    window.show()
+    print("window.show() called.")
+    
+    websocket_task = asyncio.create_task(window.start_websocket_client())
+    print("Initial websocket client task created and simple callback added in main.")
+    
+    websocket_task.add_done_callback(simple_task_done_callback)
+    
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
-    await loop.create_task(asyncio.sleep(float('inf')))  # Keep the event loop running indefinitely
+    
+    try:
+        await websocket_task
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        print("Main task was cancelled")
+    except Exception as e:
+        print(f"Error in main task: {e}")
+    
+    return app
 
 if __name__ == "__main__":
-    print("__main__ block executed.") 
+    print("__main__ block executed.")
     try:
-        asyncio.run(main())
+        qasync.run(main())
     except Exception as e:
         print(f"Error in main execution: {e}")
-        traceback.print_exc()
     print("qasync.run finished.")

@@ -2,7 +2,7 @@ import sys
 import json
 import asyncio
 import websockets
-import numpy as np
+from numpy import array, std, sqrt, cumsum  
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QComboBox, QPushButton
@@ -13,6 +13,8 @@ import qasync
 import traceback
 
 print("Starting script execution...")
+
+window = None 
 
 class OrderBook:
     def __init__(self):
@@ -69,12 +71,12 @@ class TradeSimulator(QWidget):
 
         # Add Input for Order Type
         self.order_type = QComboBox()
-        self.order_type.addItems(["Market", "Limit"]) # Added 'Limit' option
+        self.order_type.addItems(["Market", "Limit"])  
         input_layout.addWidget(QLabel("Order Type:"))
         input_layout.addWidget(self.order_type)
 
         # Add Input for Volatility
-        self.volatility = QLineEdit("0.01") # Placeholder volatility input
+        self.volatility = QLineEdit("0.01")  
         input_layout.addWidget(QLabel("Volatility:"))
         input_layout.addWidget(self.volatility)
 
@@ -115,7 +117,7 @@ class TradeSimulator(QWidget):
         self.show()
 
     async def start_websocket_client(self, exchange="OKX", asset="BTC-USDT-SWAP"):
-        print("start_websocket_client called.") # Debug print at the start
+        print("start_websocket_client called.")  
         if self.websocket and self.websocket.open:
             print("Closing existing WebSocket connection...")
             await self.websocket.close()
@@ -127,7 +129,6 @@ class TradeSimulator(QWidget):
         }
 
         uri = websocket_urls.get((exchange, asset))
-
         if not uri:
             print(f"No WebSocket URL found for {exchange} - {asset}")
             return
@@ -174,7 +175,7 @@ class TradeSimulator(QWidget):
     def calculate_slippage(self):
         quantity = float(self.quantity.text())
         print(f"Calculating slippage for quantity: {quantity}")  
-        volumes = np.cumsum([v for p,v in self.order_book.asks])
+        volumes = array([v for p,v in self.order_book.asks]).cumsum()
         prices = [p for p,v in self.order_book.asks]
         print(f"Available volumes: {volumes}, prices: {prices}") 
         if len(prices) < 10:
@@ -188,8 +189,8 @@ class TradeSimulator(QWidget):
     def almgen_chriss_impact(self):
         Q = float(self.quantity.text())
         V = sum(v for p,v in self.order_book.bids + self.order_book.asks)
-        sigma = np.std([p for p,v in self.order_book.bids + self.order_book.asks])
-        impact = 0.2 * sigma * np.sqrt(Q/V)
+        sigma = std([p for p,v in self.order_book.bids + self.order_book.asks])
+        impact = 0.2 * sigma * sqrt(Q/V)
         print(f"Calculated market impact: {impact}") 
         return impact
 
@@ -201,13 +202,12 @@ class TradeSimulator(QWidget):
             # --- Get Input Parameters ---
             selected_exchange = self.exchange.currentText()
             selected_asset = self.asset.currentText()
-            entered_quantity = float(self.quantity.text()) # Ensure quantity is float
+            entered_quantity = float(self.quantity.text())  
             selected_order_type = self.order_type.currentText()
-            entered_volatility = float(self.volatility.text()) # Ensure volatility is float
+            entered_volatility = float(self.volatility.text())  
             selected_fee_tier = self.fee_tier.currentText()
 
             # --- Calculate Metrics ---
-
             slippage = self.calculate_slippage()
             fee_rates = {"Tier 1": 0.001, "Tier 2": 0.0008, "Tier 3": 0.0005}
             base_fee_rate = fee_rates.get(selected_fee_tier, 0.001)
@@ -244,30 +244,50 @@ class TradeSimulator(QWidget):
 
         asyncio.create_task(self.start_websocket_client(selected_exchange, selected_asset))
 
+def simple_task_done_callback(task):
+    try:
+        if task.cancelled():
+            print("WebSocket client task was cancelled")
+        elif task.exception():
+            print(f"WebSocket client task failed with exception: {task.exception()}")
+            traceback.print_exc()
+    except Exception as e:
+        print(f"Error in callback: {e}")
+
 async def main():
     print("async main function called.")
     app = QApplication(sys.argv)
     print("QApplication created.")
+    
     window = TradeSimulator()
     print("TradeSimulator window created.")
+    
     window.show()
     print("window.show() called.")
-
-    def simple_task_done_callback(task):
-        if task.exception():
-            print(f"WebSocket client task failed with exception: {task.exception()}")
-            traceback.print_exc()
-
+    
+    websocket_task = asyncio.create_task(window.start_websocket_client())
+    print("Initial websocket client task created and simple callback added in main.")
+    
+    websocket_task.add_done_callback(simple_task_done_callback)
+    
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
+    
     try:
-        websocket_task = asyncio.create_task(window.start_websocket_client()) 
-        websocket_task.add_done_callback(simple_task_done_callback)
-        print("Initial websocket client task created and simple callback added in main.")
+        await websocket_task
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        print("Main task was cancelled")
     except Exception as e:
-        print(f"Error creating initial websocket task: {e}")
-
+        print(f"Error in main task: {e}")
+    
+    return app
 
 if __name__ == "__main__":
-    print("__main__ block executed.") 
-
-    qasync.run(main())
-    print("qasync.run finished.") 
+    print("__main__ block executed.")
+    try:
+        qasync.run(main())
+    except Exception as e:
+        print(f"Error in main execution: {e}")
+    print("qasync.run finished.")
